@@ -48,6 +48,7 @@ WB = 2.5  # [m]
 
 MAX_STEER = np.deg2rad(45.0)  # maximum steering angle [rad]
 MAX_DSTEER = np.deg2rad(30.0)  # maximum steering speed [rad/s]
+MAX_OMEGA = np.deg2rad(30.0) # 最大角速度
 MAX_SPEED = 55.0 / 3.6  # maximum speed [m/s]
 MIN_SPEED = -20.0 / 3.6  # minimum speed [m/s]
 MAX_ACCEL = 1.0  # maximum accel [m/ss]
@@ -78,7 +79,7 @@ def pi_2_pi(angle):
     return angle
 
 
-def get_linear_model_matrix(v, phi, delta):
+def get_linear_model_matrix(v, phi, omega):
 
     A = np.zeros((NX, NX))
     A[0, 0] = 1.0
@@ -89,16 +90,15 @@ def get_linear_model_matrix(v, phi, delta):
     A[0, 3] = - DT * v * math.sin(phi)
     A[1, 2] = DT * math.sin(phi)
     A[1, 3] = DT * v * math.cos(phi)
-    A[3, 2] = DT * math.tan(delta) / WB
 
     B = np.zeros((NX, NU))
     B[2, 0] = DT
-    B[3, 1] = DT * v / (WB * math.cos(delta) ** 2)
+    B[3, 1] = DT 
 
     C = np.zeros(NX)
     C[0] = DT * v * math.sin(phi) * phi
     C[1] = - DT * v * math.cos(phi) * phi
-    C[3] = - DT * v * delta / (WB * math.cos(delta) ** 2)
+    C[3] = 0
 
     return A, B, C
 
@@ -159,17 +159,17 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: n
     plt.plot(x, y, "*")
 
 
-def update_state(state, a, delta):
+def update_state(state, a, omega):
 
     # input check
-    if delta >= MAX_STEER:
-        delta = MAX_STEER
-    elif delta <= -MAX_STEER:
-        delta = -MAX_STEER
+    # if delta >= MAX_STEER:
+    #     delta = MAX_STEER
+    # elif delta <= -MAX_STEER:
+    #     delta = -MAX_STEER
 
     state.x = state.x + state.v * math.cos(state.yaw) * DT
     state.y = state.y + state.v * math.sin(state.yaw) * DT
-    state.yaw = state.yaw + state.v / WB * math.tan(delta) * DT
+    state.yaw = state.yaw + omega * DT
     state.v = state.v + a * DT
 
     if state.v > MAX_SPEED:
@@ -207,14 +207,14 @@ def calc_nearest_index(state, cx, cy, cyaw, pind):
     return ind, mind
 
 
-def predict_motion(x0, oa, od, xref):
+def predict_motion(x0, oa, oomega, xref):
     xbar = xref * 0.0
     for i, _ in enumerate(x0):
         xbar[i, 0] = x0[i]
 
     state = State(x=x0[0], y=x0[1], yaw=x0[3], v=x0[2])
-    for (ai, di, i) in zip(oa, od, range(1, T + 1)):
-        state = update_state(state, ai, di)
+    for (ai, omegai, i) in zip(oa, oomega, range(1, T + 1)):
+        state = update_state(state, ai, omegai)
         xbar[0, i] = state.x
         xbar[1, i] = state.y
         xbar[2, i] = state.v
@@ -223,36 +223,36 @@ def predict_motion(x0, oa, od, xref):
     return xbar
 
 
-def iterative_linear_mpc_control(xref, x0, dref, oa, od):
+def iterative_linear_mpc_control(xref, x0, omegaref, oa, oomega):
     """
     MPC contorl with updating operational point iteraitvely
     """
 
-    if oa is None or od is None:
+    if oa is None or oomega is None:
         oa = [0.0] * T
-        od = [0.0] * T
+        oomega = [0.0] * T
 
     for i in range(MAX_ITER):
-        xbar = predict_motion(x0, oa, od, xref)
-        poa, pod = oa[:], od[:]
-        oa, od, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, dref)
-        du = sum(abs(oa - poa)) + sum(abs(od - pod))  # calc u change value
+        xbar = predict_motion(x0, oa, oomega, xref)
+        poa, poomega = oa[:], oomega[:]
+        oa, oomega, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, omegaref)
+        du = sum(abs(oa - poa)) + sum(abs(oomega - poomega))  # calc u change value
         if du <= DU_TH:
             break
     else:
         print("Iterative is max iter")
 
-    return oa, od, ox, oy, oyaw, ov
+    return oa, oomega, ox, oy, oyaw, ov
 
 
-def linear_mpc_control(xref, xbar, x0, dref):
+def linear_mpc_control(xref, xbar, x0, omegaref):
     """
     linear mpc control
 
     xref: reference point
     xbar: operational point
     x0: initial state
-    dref: reference steer angle
+    omegaref: reference chassis omega
     """
 
     x = cvxpy.Variable((NX, T + 1))
@@ -268,7 +268,7 @@ def linear_mpc_control(xref, xbar, x0, dref):
             cost += cvxpy.quad_form(xref[:, t] - x[:, t], Q)
 
         A, B, C = get_linear_model_matrix(
-            xbar[2, t], xbar[3, t], dref[0, t])
+            xbar[2, t], xbar[3, t], omegaref[0, t])
         constraints += [x[:, t + 1] == A @ x[:, t] + B @ u[:, t] + C]
 
         if t < (T - 1):
@@ -282,7 +282,7 @@ def linear_mpc_control(xref, xbar, x0, dref):
     constraints += [x[2, :] <= MAX_SPEED]
     constraints += [x[2, :] >= MIN_SPEED]
     constraints += [cvxpy.abs(u[0, :]) <= MAX_ACCEL]
-    constraints += [cvxpy.abs(u[1, :]) <= MAX_STEER]
+    constraints += [cvxpy.abs(u[1, :]) <= MAX_OMEGA]
 
     prob = cvxpy.Problem(cvxpy.Minimize(cost), constraints)
     prob.solve(solver=cvxpy.ECOS, verbose=False)
@@ -293,18 +293,18 @@ def linear_mpc_control(xref, xbar, x0, dref):
         ov = get_nparray_from_matrix(x.value[2, :])
         oyaw = get_nparray_from_matrix(x.value[3, :])
         oa = get_nparray_from_matrix(u.value[0, :])
-        odelta = get_nparray_from_matrix(u.value[1, :])
+        oomega = get_nparray_from_matrix(u.value[1, :])
 
     else:
         print("Error: Cannot solve mpc..")
-        oa, odelta, ox, oy, oyaw, ov = None, None, None, None, None, None
+        oa, oomega, ox, oy, oyaw, ov = None, None, None, None, None, None
 
-    return oa, odelta, ox, oy, oyaw, ov
+    return oa, oomega, ox, oy, oyaw, ov
 
 
 def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     xref = np.zeros((NX, T + 1))
-    dref = np.zeros((1, T + 1))
+    omegaref = np.zeros((1, T + 1))
     ncourse = len(cx)
 
     ind, _ = calc_nearest_index(state, cx, cy, cyaw, pind)
@@ -316,7 +316,7 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     xref[1, 0] = cy[ind]
     xref[2, 0] = sp[ind]
     xref[3, 0] = cyaw[ind]
-    dref[0, 0] = 0.0  # steer operational point should be 0
+    omegaref[0, 0] = sp[ind]*ck[ind]  # 小车角速度
 
     travel = 0.0
 
@@ -329,15 +329,15 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
             xref[1, i] = cy[ind + dind]
             xref[2, i] = sp[ind + dind]
             xref[3, i] = cyaw[ind + dind]
-            dref[0, i] = 0.0
+            omegaref[0, i] = sp[ind + dind]*ck[ind + dind]
         else:
             xref[0, i] = cx[ncourse - 1]
             xref[1, i] = cy[ncourse - 1]
             xref[2, i] = sp[ncourse - 1]
             xref[3, i] = cyaw[ncourse - 1]
-            dref[0, i] = 0.0
+            omegaref[0, i] = sp[ncourse - 1]*ck[ncourse - 1]
 
-    return xref, ind, dref
+    return xref, ind, omegaref
 
 
 def check_goal(state, goal, tind, nind):
@@ -389,11 +389,11 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
     yaw = [state.yaw]
     v = [state.v]
     t = [0.0]
-    d = [0.0]
     a = [0.0]
+    omega = [0.0]
     target_ind, _ = calc_nearest_index(state, cx, cy, cyaw, 0)
 
-    odelta, oa = None, None
+    oomega, oa = None, None
 
     cyaw = smooth_yaw(cyaw)
 
@@ -403,11 +403,11 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
 
         x0 = [state.x, state.y, state.v, state.yaw]  # current state
 
-        oa, odelta, ox, oy, oyaw, ov = iterative_linear_mpc_control(
-            xref, x0, dref, oa, odelta)
+        oa, oomega, ox, oy, oyaw, ov = iterative_linear_mpc_control(
+            xref, x0, dref, oa, oomega)
 
-        if odelta is not None:
-            di, ai = odelta[0], oa[0]
+        if oomega is not None:
+            di, ai = oomega[0], oa[0]
 
         state = update_state(state, ai, di)
         time = time + DT
@@ -417,7 +417,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
         yaw.append(state.yaw)
         v.append(state.v)
         t.append(time)
-        d.append(di)
+        omega.append(di)
         a.append(ai)
 
         if check_goal(state, goal, target_ind, len(cx)):
@@ -442,7 +442,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
                       + ", speed[km/h]:" + str(round(state.v * 3.6, 2)))
             plt.pause(0.0001)
 
-    return t, x, y, yaw, v, d, a
+    return t, x, y, yaw, v, omega, a
 
 
 def calc_speed_profile(cx, cy, cyaw, target_speed):
