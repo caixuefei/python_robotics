@@ -11,46 +11,47 @@ import math
 import numpy as np
 import sys
 import pathlib
+import gif
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 
 from PathPlanning.CubicSpline import cubic_spline_planner
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 5  # horizon length
+T = 10  # horizon length
 
 # mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
-Q = np.diag([1.0, 1.0, 0.5, 0.5])  # state cost matrix
+Q = np.diag([2.0, 1.0, 0.5, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
-GOAL_DIS = 1.5  # goal distance
-STOP_SPEED = 0.5 / 3.6  # stop speed
+GOAL_DIS = 0.1  # goal distance
+STOP_SPEED = 0.1  # stop speed
 MAX_TIME = 500.0  # max simulation time
 
 # iterative paramter
 MAX_ITER = 3  # Max iteration
 DU_TH = 0.1  # iteration finish param
 
-TARGET_SPEED = 10.0 / 3.6  # [m/s] target speed
+TARGET_SPEED = 1.2  # [m/s] target speed
 N_IND_SEARCH = 10  # Search index number
 
-DT = 0.2  # [s] time tick
+DT = 0.01  # [s] time tick
 
 # Vehicle parameters
-LENGTH = 4.5  # [m]
-WIDTH = 2.0  # [m]
+LENGTH = 2.0  # [m]
+WIDTH = 1.0  # [m]
 BACKTOWHEEL = 1.0  # [m]
-WHEEL_LEN = 0.3  # [m]
-WHEEL_WIDTH = 0.2  # [m]
-TREAD = 0.7  # [m]
-WB = 2.5  # [m]
+WHEEL_LEN = 0.2  # [m]
+WHEEL_WIDTH = 0.1  # [m]
+TREAD = 0.5  # [m]
+WB = 0.0  # [m]
 
 MAX_STEER = np.deg2rad(45.0)  # maximum steering angle [rad]
 MAX_DSTEER = np.deg2rad(30.0)  # maximum steering speed [rad/s]
 MAX_OMEGA = np.deg2rad(30.0) # 最大角速度
-MAX_SPEED = 55.0 / 3.6  # maximum speed [m/s]
-MIN_SPEED = -20.0 / 3.6  # minimum speed [m/s]
+MAX_SPEED = 2.0  # maximum speed [m/s]
+MIN_SPEED = -2.0  # minimum speed [m/s]
 MAX_ACCEL = 1.0  # maximum accel [m/ss]
 
 show_animation = True
@@ -103,7 +104,7 @@ def get_linear_model_matrix(v, phi, omega):
     return A, B, C
 
 
-def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: no cover
+def plot_car(x, y, yaw, axis, cabcolor="-r", truckcolor="-k"):  # pragma: no cover
 
     outline = np.array([[-BACKTOWHEEL, (LENGTH - BACKTOWHEEL), (LENGTH - BACKTOWHEEL), -BACKTOWHEEL, -BACKTOWHEEL],
                         [WIDTH / 2, WIDTH / 2, - WIDTH / 2, -WIDTH / 2, WIDTH / 2]])
@@ -111,20 +112,11 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: n
     fr_wheel = np.array([[WHEEL_LEN, -WHEEL_LEN, -WHEEL_LEN, WHEEL_LEN, WHEEL_LEN],
                          [-WHEEL_WIDTH - TREAD, -WHEEL_WIDTH - TREAD, WHEEL_WIDTH - TREAD, WHEEL_WIDTH - TREAD, -WHEEL_WIDTH - TREAD]])
 
-    rr_wheel = np.copy(fr_wheel)
-
     fl_wheel = np.copy(fr_wheel)
     fl_wheel[1, :] *= -1
-    rl_wheel = np.copy(rr_wheel)
-    rl_wheel[1, :] *= -1
 
     Rot1 = np.array([[math.cos(yaw), math.sin(yaw)],
                      [-math.sin(yaw), math.cos(yaw)]])
-    Rot2 = np.array([[math.cos(steer), math.sin(steer)],
-                     [-math.sin(steer), math.cos(steer)]])
-
-    fr_wheel = (fr_wheel.T.dot(Rot2)).T
-    fl_wheel = (fl_wheel.T.dot(Rot2)).T
     fr_wheel[0, :] += WB
     fl_wheel[0, :] += WB
 
@@ -132,31 +124,21 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: n
     fl_wheel = (fl_wheel.T.dot(Rot1)).T
 
     outline = (outline.T.dot(Rot1)).T
-    rr_wheel = (rr_wheel.T.dot(Rot1)).T
-    rl_wheel = (rl_wheel.T.dot(Rot1)).T
 
     outline[0, :] += x
     outline[1, :] += y
     fr_wheel[0, :] += x
     fr_wheel[1, :] += y
-    rr_wheel[0, :] += x
-    rr_wheel[1, :] += y
     fl_wheel[0, :] += x
     fl_wheel[1, :] += y
-    rl_wheel[0, :] += x
-    rl_wheel[1, :] += y
 
-    plt.plot(np.array(outline[0, :]).flatten(),
+    axis.plot(np.array(outline[0, :]).flatten(),
              np.array(outline[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(fr_wheel[0, :]).flatten(),
+    axis.plot(np.array(fr_wheel[0, :]).flatten(),
              np.array(fr_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(rr_wheel[0, :]).flatten(),
-             np.array(rr_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(fl_wheel[0, :]).flatten(),
+    axis.plot(np.array(fl_wheel[0, :]).flatten(),
              np.array(fl_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(rl_wheel[0, :]).flatten(),
-             np.array(rl_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(x, y, "*")
+    axis.plot(x, y, "*")
 
 
 def update_state(state, a, omega):
@@ -391,11 +373,16 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
     t = [0.0]
     a = [0.0]
     omega = [0.0]
+    velref = [0.0]
     target_ind, _ = calc_nearest_index(state, cx, cy, cyaw, 0)
 
     oomega, oa = None, None
 
     cyaw = smooth_yaw(cyaw)
+
+    frames = []
+
+    fig,axes = plt.subplots(2,1)
 
     while MAX_TIME >= time:
         xref, target_ind, dref = calc_ref_trajectory(
@@ -419,30 +406,60 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
         t.append(time)
         omega.append(di)
         a.append(ai)
+        velref.append(xref[2,0])
 
         if check_goal(state, goal, target_ind, len(cx)):
             print("Goal")
             break
 
         if show_animation:  # pragma: no cover
-            plt.cla()
-            # for stopping simulation with the esc key.
-            plt.gcf().canvas.mpl_connect('key_release_event',
-                    lambda event: [exit(0) if event.key == 'escape' else None])
-            if ox is not None:
-                plt.plot(ox, oy, "xr", label="MPC")
-            plt.plot(cx, cy, "-r", label="course")
-            plt.plot(x, y, "ob", label="trajectory")
-            plt.plot(xref[0, :], xref[1, :], "xk", label="xref")
-            plt.plot(cx[target_ind], cy[target_ind], "xg", label="target")
-            plot_car(state.x, state.y, state.yaw, steer=di)
-            plt.axis("equal")
-            plt.grid(True)
-            plt.title("Time[s]:" + str(round(time, 2))
-                      + ", speed[km/h]:" + str(round(state.v * 3.6, 2)))
-            plt.pause(0.0001)
+            plot_track(ox,oy,x,y,cx,cy,xref,target_ind,state,time,fig,axes)
 
+            axes[1].plot(t, v, "-r", label="state speed")
+            axes[1].plot(t, velref, "-b", label="reference speed")
+            axes[1].grid(True)
+            axes[1].set_xlabel("Time [s]")
+            axes[1].set_ylabel("Speed [m/s]")
+            # frame = plot_track(ox,oy,x,y,cx,cy,xref,target_ind,state,time)
+            # frames.append(frame)
+            # plt.cla()
+            # # for stopping simulation with the esc key.
+            # plt.gcf().canvas.mpl_connect('key_release_event',
+            #         lambda event: [exit(0) if event.key == 'escape' else None])
+            # if ox is not None:
+            #     plt.plot(ox, oy, "xr", label="MPC")
+            # plt.plot(cx, cy, "-r", label="course")
+            # plt.plot(x, y, "ob", label="trajectory")
+            # plt.plot(xref[0, :], xref[1, :], "xk", label="xref")
+            # plt.plot(cx[target_ind], cy[target_ind], "xg", label="target")
+            # plot_car(state.x, state.y, state.yaw)
+            # plt.axis("equal")
+            # plt.grid(True)
+            # plt.title("Time[s]:" + str(round(time, 2))
+            #           + ", speed[km/h]:" + str(round(state.v * 3.6, 2)))
+            # plt.pause(0.0001)
+
+    # gif.save(frames,'track_ani.gif',duration=3.5)
     return t, x, y, yaw, v, omega, a
+
+# @gif.frame
+def plot_track(ox,oy,x,y,cx,cy,xref,target_ind,state,time,fig,axes):
+    axes[0].cla()
+    # for stopping simulation with the esc key.
+    plt.gcf().canvas.mpl_connect('key_release_event',
+            lambda event: [exit(0) if event.key == 'escape' else None])
+    if ox is not None:
+        axes[0].plot(ox, oy, "xr", label="MPC")
+    axes[0].plot(cx, cy, "-r", label="course")
+    axes[0].plot(x, y, "ob", label="trajectory")
+    axes[0].plot(xref[0, :], xref[1, :], "xk", label="xref")
+    axes[0].plot(cx[target_ind], cy[target_ind], "xg", label="target")
+    plot_car(state.x, state.y, state.yaw, axes[0])
+    axes[0].axis("equal")
+    axes[0].grid(True)
+    axes[0].set_title("Time[s]:" + str(round(time, 2))
+                + ", speed[m/s]:" + str(round(state.v, 2)))
+    plt.pause(0.0001)
 
 
 def calc_speed_profile(cx, cy, cyaw, target_speed):
@@ -492,6 +509,14 @@ def smooth_yaw(yaw):
 
 def get_straight_course(dl):
     ax = [0.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0]
+    ay = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(
+        ax, ay, ds=dl)
+
+    return cx, cy, cyaw, ck
+
+def get_straight_course_test1(dl):
+    ax = [0.0, 0.2, 0.6, 1.0, 1.2, 1.6, 2.0]
     ay = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(
         ax, ay, ds=dl)
@@ -549,12 +574,13 @@ def get_switch_back_course(dl):
 def main():
     print(__file__ + " start!!")
 
-    dl = 1.0  # course tick
+    dl = 0.1  # course tick
     # cx, cy, cyaw, ck = get_straight_course(dl)
     # cx, cy, cyaw, ck = get_straight_course2(dl)
     # cx, cy, cyaw, ck = get_straight_course3(dl)
     # cx, cy, cyaw, ck = get_forward_course(dl)
-    cx, cy, cyaw, ck = get_switch_back_course(dl)
+    # cx, cy, cyaw, ck = get_switch_back_course(dl)
+    cx, cy, cyaw, ck = get_straight_course_test1(dl)
 
     sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
 
