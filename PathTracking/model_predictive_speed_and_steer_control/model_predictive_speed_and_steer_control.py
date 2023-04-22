@@ -13,17 +13,18 @@ import sys
 import pathlib
 import gif
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
-
+print (sys.path)
+from pathGen.pathGenerator import PathGen
 from PathPlanning.CubicSpline import cubic_spline_planner
 
 NX = 4  # x = x, y, v, yaw
 NU = 2  # a = [accel, steer]
-T = 10  # horizon length
+T = 5  # horizon length
 
 # mpc parameters
 R = np.diag([0.01, 0.01])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
-Q = np.diag([2.0, 1.0, 0.5, 0.5])  # state cost matrix
+Q = np.diag([1.0, 1.0, 1.0, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
 GOAL_DIS = 0.1  # goal distance
 STOP_SPEED = 0.1  # stop speed
@@ -47,8 +48,6 @@ WHEEL_WIDTH = 0.1  # [m]
 TREAD = 0.5  # [m]
 WB = 0.0  # [m]
 
-MAX_STEER = np.deg2rad(45.0)  # maximum steering angle [rad]
-MAX_DSTEER = np.deg2rad(30.0)  # maximum steering speed [rad/s]
 MAX_OMEGA = np.deg2rad(30.0) # 最大角速度
 MAX_SPEED = 2.0  # maximum speed [m/s]
 MIN_SPEED = -2.0  # minimum speed [m/s]
@@ -249,14 +248,12 @@ def linear_mpc_control(xref, xbar, x0, omegaref):
         if t != 0:
             cost += cvxpy.quad_form(xref[:, t] - x[:, t], Q)
 
-        A, B, C = get_linear_model_matrix(
-            xbar[2, t], xbar[3, t], omegaref[0, t])
+        A, B, C = get_linear_model_matrix(xref[2, t], xref[3, t], omegaref[0,t])
         constraints += [x[:, t + 1] == A @ x[:, t] + B @ u[:, t] + C]
 
         if t < (T - 1):
             cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], Rd)
-            constraints += [cvxpy.abs(u[1, t + 1] - u[1, t]) <=
-                            MAX_DSTEER * DT]
+            # constraints += [cvxpy.abs(u[1, t]) <= MAX_OMEGA * DT]
 
     cost += cvxpy.quad_form(xref[:, T] - x[:, T], Qf)
 
@@ -284,15 +281,16 @@ def linear_mpc_control(xref, xbar, x0, omegaref):
     return oa, oomega, ox, oy, oyaw, ov
 
 
-def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
+def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, pind):
     xref = np.zeros((NX, T + 1))
     omegaref = np.zeros((1, T + 1))
     ncourse = len(cx)
 
-    ind, _ = calc_nearest_index(state, cx, cy, cyaw, pind)
+    # ind, _ = calc_nearest_index(state, cx, cy, cyaw, pind)
 
-    if pind >= ind:
-        ind = pind
+    # if pind >= ind:
+    #     ind = pind
+    ind = pind
 
     xref[0, 0] = cx[ind]
     xref[1, 0] = cy[ind]
@@ -303,15 +301,15 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, dl, pind):
     travel = 0.0
 
     for i in range(T + 1):
-        travel += abs(state.v) * DT
-        dind = int(round(travel / dl))
+        # travel += abs(state.v) * DT
+        # dind = int(round(travel / dl))
 
-        if (ind + dind) < ncourse:
-            xref[0, i] = cx[ind + dind]
-            xref[1, i] = cy[ind + dind]
-            xref[2, i] = sp[ind + dind]
-            xref[3, i] = cyaw[ind + dind]
-            omegaref[0, i] = sp[ind + dind]*ck[ind + dind]
+        if (ind + i) < ncourse:
+            xref[0, i] = cx[ind + i]
+            xref[1, i] = cy[ind + i]
+            xref[2, i] = sp[ind + i]
+            xref[3, i] = cyaw[ind + i]
+            omegaref[0, i] = sp[ind + i]*ck[ind + i]
         else:
             xref[0, i] = cx[ncourse - 1]
             xref[1, i] = cy[ncourse - 1]
@@ -342,7 +340,7 @@ def check_goal(state, goal, tind, nind):
     return False
 
 
-def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
+def do_simulation(cx, cy, cyaw, ck, sp, initial_state):
     """
     Simulation
 
@@ -374,7 +372,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
     a = [0.0]
     omega = [0.0]
     velref = [0.0]
-    target_ind, _ = calc_nearest_index(state, cx, cy, cyaw, 0)
+    # target_ind, _ = calc_nearest_index(state, cx, cy, cyaw, 0)
 
     oomega, oa = None, None
 
@@ -384,9 +382,10 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
 
     fig,axes = plt.subplots(2,1)
 
+    indTime = 0
     while MAX_TIME >= time:
         xref, target_ind, dref = calc_ref_trajectory(
-            state, cx, cy, cyaw, ck, sp, dl, target_ind)
+            state, cx, cy, cyaw, ck, sp, indTime)
 
         x0 = [state.x, state.y, state.v, state.yaw]  # current state
 
@@ -394,9 +393,10 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
             xref, x0, dref, oa, oomega)
 
         if oomega is not None:
-            di, ai = oomega[0], oa[0]
+            omegai, ai = oomega[0], oa[0]
 
-        state = update_state(state, ai, di)
+        state = update_state(state, ai, omegai)
+        indTime += 1 
         time = time + DT
 
         x.append(state.x)
@@ -404,7 +404,7 @@ def do_simulation(cx, cy, cyaw, ck, sp, dl, initial_state):
         yaw.append(state.yaw)
         v.append(state.v)
         t.append(time)
-        omega.append(di)
+        omega.append(omegai)
         a.append(ai)
         velref.append(xref[2,0])
 
@@ -458,7 +458,8 @@ def plot_track(ox,oy,x,y,cx,cy,xref,target_ind,state,time,fig,axes):
     axes[0].axis("equal")
     axes[0].grid(True)
     axes[0].set_title("Time[s]:" + str(round(time, 2))
-                + ", speed[m/s]:" + str(round(state.v, 2)))
+                + ", speed[m/s]:" + str(round(state.v, 2))
+                + ", X[m]:" + str(round(state.x, 2)))
     plt.pause(0.0001)
 
 
@@ -574,20 +575,81 @@ def get_switch_back_course(dl):
 def main():
     print(__file__ + " start!!")
 
-    dl = 0.1  # course tick
+    # pos generator
+    pathGen = PathGen(trajPtSampleT=10)             #轨迹点每隔 trajPtSampleT ms 采样，trajPtSampleT需要是10ms的倍数
+    # step1: start Pos in AMR_frame and in Map_frame
+    pos_in_AMR = [0,0,0]
+    pos_in_Map = [0,0,0]                           # 根据实际地图的路径起点修改，如果用里程计定位的方法，且重置了小车位置，则pos_in_Map = [0,0,0]
+    # step2: calculate relative pos from AMR_frame to Map_frame
+    pathGen.CalRelativePos(pos_in_AMR, pos_in_Map)
+    # step3: set start Point, based on AMR_frame
+    pathGen.SetStartPoint(pos_in_AMR[:])
+    # step4: add PathLine, and PathBezier
+    #        params in pathGen.LineToRelaviePos: (relative_pos, pathID=0, vel=0.3, acc=0.3)
+    #                relative_pos:  relative to the position of the target of the last path
+    #                               [x(m),y(m),theta(deg)]
+    #                pathID:        id
+    #        params in pathGen.BezierToRelativePos: (relative_pos, pathID=0, bezierType="auto", vel=0.3, acc=0.3)
+    #                relative_pos:  relative to the position of the target of the last path, 
+    #                               [x(m),y(m),theta(deg)]
+    #                pathID:        id
+    #                bezierType:    the available value is in {'auto', 'xy', 'yx', 's_yxy', 's_xyx'}
+    #                               default: 'auto', the curve shape depends on relative_pos[2], 
+    #                                         in other words, start heading align with the curve's start tangent dir;
+    #                                                         target heading align with the curve's end tangent dir.
+    pathID = -1
+    vel = 0.4
+    acc = 0.4
+    pathID = pathID + 1
+    relative_pos = [1, 0, 0]
+    pathGen.LineToRelaviePos(relative_pos, pathID, vel, acc)
+    # step4.5: generate trajectory points from some paths， and check 
+    # pgPaths中必须是连续的pathID
+    pgPaths = [0]
+    pathGen.GenerateTrajPts(pgPaths)
+    pathGen.CheckPathofTrajPts()
+    # step5: transform
+    pathGen.TransformAllPoints()
+    # step6: generate the script
+    script = pathGen.MoveScript()
+    print(script)
+    # step7: display
+    fig_posgen,ax_posgen = plt.subplots()
+    # ax_posgen = fig_posgen.add_subplot()
+    pathGen.Display(ax_posgen)
+    # plt.show()
+    for path in pathGen.paths:
+        cx = [0] * path["trajPtSize"]
+        cy = [0] * path["trajPtSize"]
+        cyaw = [0] * path["trajPtSize"]
+        ck = [0] * path["trajPtSize"]
+        sp = [0] * path["trajPtSize"]
+        ct = [0] * path["trajPtSize"]
+        for i in range(path["trajPtSize"]):
+            cx[i] = path["points"][i]["x"]
+            cy[i] = path["points"][i]["y"]
+            cyaw[i] = path["points"][i]["theta"]
+            ck[i] = path["points"][i]["kappa"]
+            sp[i] = path["points"][i]["vel"]
+            ct[i] = path["points"][i]["relativeTime"]
+    #######################################################################################
+    # simple generator
+    # dl = 0.1  # course tick
     # cx, cy, cyaw, ck = get_straight_course(dl)
     # cx, cy, cyaw, ck = get_straight_course2(dl)
     # cx, cy, cyaw, ck = get_straight_course3(dl)
     # cx, cy, cyaw, ck = get_forward_course(dl)
     # cx, cy, cyaw, ck = get_switch_back_course(dl)
-    cx, cy, cyaw, ck = get_straight_course_test1(dl)
+    # cx, cy, cyaw, ck = get_straight_course_test1(dl)
 
-    sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
+    # sp = calc_speed_profile(cx, cy, cyaw, TARGET_SPEED)
+    ########################################################
+
 
     initial_state = State(x=cx[0], y=cy[0], yaw=cyaw[0], v=0.0)
 
     t, x, y, yaw, v, d, a = do_simulation(
-        cx, cy, cyaw, ck, sp, dl, initial_state)
+        cx, cy, cyaw, ck, sp, initial_state)
 
     if show_animation:  # pragma: no cover
         plt.close("all")

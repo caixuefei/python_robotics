@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(__file__)+'/..')
 print (sys.path)
-from pathGen import PathGen
+from pathGenerator import PathGen
 
 def test_trajPtsPath_Demo():
     pathGen = PathGen(trajPtSampleT=50)             #轨迹点每隔 trajPtSampleT ms 采样，trajPtSampleT需要是10ms的倍数
@@ -55,7 +55,7 @@ def test_trajPtsPath_Demo():
 
     # step4.5: generate trajectory points from some paths， and check 
     # pgPaths中必须是连续的pathID
-    pgPaths = [0,1]
+    pgPaths = [0]
     pathGen.GenerateTrajPts(pgPaths)
     pathGen.CheckPathofTrajPts()
 

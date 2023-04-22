@@ -5,6 +5,10 @@ from time import sleep
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+import pathlib
+import sys
+sys.path.append(str(pathlib.Path(__file__).parent))
+print(sys.path)
 from libModules import LibModules
 import struct
 from utilityPG import *
@@ -474,7 +478,9 @@ class PathGen():
 
 
 
-if __name__ == '__main__':  
+if __name__ == '__main__': 
+    import sys 
+    sys.path.append("..")
     pathGen = PathGen()
 
     # test_sdPath1()
