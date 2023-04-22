@@ -60,8 +60,9 @@ class Py_TrajPt_t(Structure):
 
 class Modules_DLL:
     def __init__(self):
-        # self.cdll = cdll.LoadLibrary(os.path.dirname(__file__)+'/libModules.dll')   #在3.8.8版本能运行。在3.9.6不可
-        self.cdll = CDLL(os.path.dirname(__file__)+'\libModules.dll',winmode=0)       #在3.8.8版本，3.9.6都可
+        # 报错无法找到dll时尝试切换下列添加方法
+        self.cdll = cdll.LoadLibrary(os.path.dirname(__file__)+'/libModules.dll')   #在3.8.8版本能运行。在3.9.6不可
+        # self.cdll = CDLL(os.path.dirname(__file__)+'\libModules.dll',winmode=0)       #在3.8.8版本，3.9.6都可
         return
     
     def PathCalcParams(self, pathTskParams, curPose):

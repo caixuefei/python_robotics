@@ -22,7 +22,7 @@ NU = 2  # a = [accel, steer]
 T = 5  # horizon length
 
 # mpc parameters
-R = np.diag([0.01, 0.01])  # input cost matrix
+R = np.diag([1.0, 1.0])  # input cost matrix
 Rd = np.diag([0.01, 1.0])  # input difference cost matrix
 Q = np.diag([1.0, 1.0, 1.0, 0.5])  # state cost matrix
 Qf = Q  # state final matrix
@@ -204,7 +204,7 @@ def predict_motion(x0, oa, oomega, xref):
     return xbar
 
 
-def iterative_linear_mpc_control(xref, x0, omegaref, oa, oomega):
+def iterative_linear_mpc_control(xref, x0, aref, omegaref, oa, oomega):
     """
     MPC contorl with updating operational point iteraitvely
     """
@@ -216,7 +216,7 @@ def iterative_linear_mpc_control(xref, x0, omegaref, oa, oomega):
     for i in range(MAX_ITER):
         xbar = predict_motion(x0, oa, oomega, xref)
         poa, poomega = oa[:], oomega[:]
-        oa, oomega, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, omegaref)
+        oa, oomega, ox, oy, oyaw, ov = linear_mpc_control(xref, xbar, x0, aref, omegaref)
         du = sum(abs(oa - poa)) + sum(abs(oomega - poomega))  # calc u change value
         if du <= DU_TH:
             break
@@ -226,7 +226,7 @@ def iterative_linear_mpc_control(xref, x0, omegaref, oa, oomega):
     return oa, oomega, ox, oy, oyaw, ov
 
 
-def linear_mpc_control(xref, xbar, x0, omegaref):
+def linear_mpc_control(xref, xbar, x0, aref, omegaref):
     """
     linear mpc control
 
@@ -239,11 +239,15 @@ def linear_mpc_control(xref, xbar, x0, omegaref):
     x = cvxpy.Variable((NX, T + 1))
     u = cvxpy.Variable((NU, T))
 
+    uref = np.zeros((2, T+1))
+    uref[0,:] = aref
+    uref[1,:] = omegaref
+
     cost = 0.0
     constraints = []
 
     for t in range(T):
-        cost += cvxpy.quad_form(u[:, t], R)
+        cost += cvxpy.quad_form(uref[:, t] - u[:, t], R)
 
         if t != 0:
             cost += cvxpy.quad_form(xref[:, t] - x[:, t], Q)
@@ -251,8 +255,8 @@ def linear_mpc_control(xref, xbar, x0, omegaref):
         A, B, C = get_linear_model_matrix(xref[2, t], xref[3, t], omegaref[0,t])
         constraints += [x[:, t + 1] == A @ x[:, t] + B @ u[:, t] + C]
 
-        if t < (T - 1):
-            cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], Rd)
+        # if t < (T - 1):
+        #     cost += cvxpy.quad_form(uref[:, t] - u[:, t], Rd)
             # constraints += [cvxpy.abs(u[1, t]) <= MAX_OMEGA * DT]
 
     cost += cvxpy.quad_form(xref[:, T] - x[:, T], Qf)
@@ -283,6 +287,7 @@ def linear_mpc_control(xref, xbar, x0, omegaref):
 
 def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, pind):
     xref = np.zeros((NX, T + 1))
+    aref = np.zeros((1, T + 1))
     omegaref = np.zeros((1, T + 1))
     ncourse = len(cx)
 
@@ -296,6 +301,10 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, pind):
     xref[1, 0] = cy[ind]
     xref[2, 0] = sp[ind]
     xref[3, 0] = cyaw[ind]
+    if ind == 0:
+        aref[0,0] = 0.0
+    else:
+        aref[0,0] = (sp[ind] - sp[ind-1])/DT
     omegaref[0, 0] = sp[ind]*ck[ind]  # 小车角速度
 
     travel = 0.0
@@ -309,15 +318,17 @@ def calc_ref_trajectory(state, cx, cy, cyaw, ck, sp, pind):
             xref[1, i] = cy[ind + i]
             xref[2, i] = sp[ind + i]
             xref[3, i] = cyaw[ind + i]
+            aref[0, i] = (sp[ind + i] - sp[ind + i -1])/DT
             omegaref[0, i] = sp[ind + i]*ck[ind + i]
         else:
             xref[0, i] = cx[ncourse - 1]
             xref[1, i] = cy[ncourse - 1]
             xref[2, i] = sp[ncourse - 1]
             xref[3, i] = cyaw[ncourse - 1]
+            aref[0, i] = (sp[ncourse - 1] - sp[ncourse - 1 -1])/DT
             omegaref[0, i] = sp[ncourse - 1]*ck[ncourse - 1]
 
-    return xref, ind, omegaref
+    return xref, ind, aref, omegaref
 
 
 def check_goal(state, goal, tind, nind):
@@ -384,13 +395,13 @@ def do_simulation(cx, cy, cyaw, ck, sp, initial_state):
 
     indTime = 0
     while MAX_TIME >= time:
-        xref, target_ind, dref = calc_ref_trajectory(
+        xref, target_ind, aref, omegaref = calc_ref_trajectory(
             state, cx, cy, cyaw, ck, sp, indTime)
 
         x0 = [state.x, state.y, state.v, state.yaw]  # current state
 
         oa, oomega, ox, oy, oyaw, ov = iterative_linear_mpc_control(
-            xref, x0, dref, oa, oomega)
+            xref, x0, aref, omegaref, oa, oomega)
 
         if oomega is not None:
             omegai, ai = oomega[0], oa[0]
@@ -661,12 +672,14 @@ def main():
         plt.xlabel("x[m]")
         plt.ylabel("y[m]")
         plt.legend()
+        plt.savefig("path.png")
 
         plt.subplots()
         plt.plot(t, v, "-r", label="speed")
         plt.grid(True)
         plt.xlabel("Time [s]")
         plt.ylabel("Speed [kmh]")
+        plt.savefig("vel.png")
 
         plt.show()
 
